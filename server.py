@@ -14,7 +14,7 @@ server = Flask(__name__)
 model = SentenceTransformer('all-MiniLM-L6-v2')
 pineconeObj = Pinecone(api_key=os.getenv('PINECONE_API_KEY'))
 
-@server.route('/embed', methods=['POST'])
+@server.post('/embed')
 def embed():
     print("HIT PYTHON SERVICE!")
     car_data = request.json.get('car_data', [])
@@ -45,7 +45,7 @@ def embed():
 
 
 
-@server.route('/search', methods=['GET'])
+@server.get('/search')
 def search():
 
 
