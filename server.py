@@ -10,14 +10,11 @@ from pinecone.grpc import PineconeGRPC as Pinecone
 load_dotenv()
 server = Flask(__name__)
 
-
-
 # Check if the Flask server is starting
 print("Starting Flask server...")
 
 # Initialize SentenceTransformer Model & PineCone Client
 print("Initializing SentenceTransformer model and PineCone client...")
-
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 bm25 = BM25Encoder()
@@ -30,7 +27,7 @@ if index_name not in pineconeObj.list_indexes().names():
     print("Index not found, creating index...")
     pineconeObj.create_index(
         name=index_name,
-        dimension=384,  
+        dimension=384,
         metric="dotproduct",
         spec=ServerlessSpec(
             cloud="aws",
@@ -47,6 +44,9 @@ index = pineconeObj.Index(index_name)
 index_stats = index.describe_index_stats()
 print("Index connected and ready.")
 
+# Dictionary to store the mapping from vector IDs to car objects
+vector_id_to_car = {}
+
 # Create sparse-dense vector embeddings for an array of car descriptions
 @server.post('/embedDescriptions')
 def embed_descriptions():
@@ -62,7 +62,6 @@ def embed_descriptions():
     print("The shape of the dense vector embeddings are ", dense_embeddings.shape)
 
     # Dense Embeddings are created at this point so semantic part is half done. Now to create sparse vectors.
-    
     bm25.fit(car_data)
     sparse_vectors = bm25.encode_documents(car_data)
     print("Sparse vectors created.")
@@ -83,6 +82,10 @@ def embed_descriptions():
         }
         vectors.append(vector)
         vector_ids.append(vector_id)
+        vector_id_to_car[vector_id] = car_data[i]  # Store the mapping
+
+    # Print the mapping for debugging
+    print("Vector ID to Car Mapping: ", vector_id_to_car)
 
     # Upsert vectors into Pinecone index
     upsert_response = index.upsert(
@@ -93,24 +96,24 @@ def embed_descriptions():
     # Return the vector IDs
     return jsonify({"vector_ids": vector_ids})
 
-
-
 # Create a sparse-dense vector embedding of a single car description
 @server.post('/embedDescription')
 def embed_description():
-    print("Hit /embedDescriptions endpoint!")
+    print("Hit /embedDescription endpoint!")
     car_data = request.json.get('car_data', '')
     print("Received car data: ", car_data)
 
     if not car_data:
         return jsonify({'error': 'No car data provided'}), 400
 
+    # Make sure car_data is a list
+    car_data = [car_data]
+
     # These are dense vectors
     dense_embeddings = model.encode(car_data)
     print("The shape of the dense vector embeddings are ", dense_embeddings.shape)
 
     # Dense Embeddings are created at this point so semantic part is half done. Now to create sparse vectors.
-    
     bm25.fit(car_data)
     sparse_vectors = bm25.encode_documents(car_data)
     print("Sparse vectors created.")
@@ -131,16 +134,19 @@ def embed_description():
         }
         vectors.append(vector)
         vector_ids.append(vector_id)
+        vector_id_to_car[vector_id] = car_data[i]  # Store the mapping
+    
+    # Print the mapping for debugging
+    print("Vector ID to Car Mapping: ", vector_id_to_car)
 
     # Upsert vectors into Pinecone index
     upsert_response = index.upsert(
         vectors=vectors,
-        namespace='cars-testing-namespace'
+        namespace='testing-namespace'
     )
 
     # Return the vector IDs
     return jsonify({"vector_ids": vector_ids})
-
 
 # Define the search endpoint
 @server.get('/search')
@@ -170,21 +176,24 @@ def search():
 
     # Extract the vector IDs from the query response
     vector_ids = [match['id'] for match in query_response['matches']]
+    print("Vector IDs: ", vector_ids)
 
-    return jsonify({"vector_ids": vector_ids})
+    # Retrieve the car objects based on the vector IDs
+    car_objects = [{"vector_id": vector_id, "car": vector_id_to_car.get(vector_id, "Car data not found")} for vector_id in vector_ids]
+
+    return jsonify({"results": car_objects})
 
 # Endpoint to get namespaces and their stats
 @server.get('/namespaces')
 def get_namespaces():
-    #index_stats = index.describe_index_stats()
     namespaces = index_stats['namespaces']
+    print(namespaces)
     
     namespace_list = []
     for namespace, stats in namespaces.items():
         namespace_list.append({"namespace": namespace, "vector_count": stats['vector_count']})
     
     return jsonify({"namespaces": namespace_list})
-
 
 # Run the Flask server
 if __name__ == '__main__':
